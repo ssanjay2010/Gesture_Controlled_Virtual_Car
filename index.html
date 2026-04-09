@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Gesture Car Simulator - Medium Control</title>
+  <title>Gesture Car Simulator - 30km/h Limit</title>
 
   <style>
     body { margin: 0; overflow: hidden; }
@@ -78,18 +78,23 @@
 <script>
 let scene, camera, renderer, car;
 
-// 🚗 MEDIUM SPEED PHYSICS
+// 🚗 PHYSICS (TUNED FOR 30 km/h)
 let speed = 0;
 let steering = 0;
 let acceleration = 0;
 
-let maxSpeed = 0.35;     // ⭐ medium speed
-let accelRate = 0.01;
-let brakeRate = 0.025;
-let frictionFactor = 0.997;
+let maxSpeed = 0.3;       // ≈ 30 km/h
+let accelRate = 0.015;
+let brakeRate = 0.03;
+let frictionFactor = 0.996;
 
 // OBJECTS
+let trafficCars = [];
 let obstacles = [];
+
+// AUDIO
+let horn = new Audio("https://actions.google.com/sounds/v1/alarms/car_horn.ogg");
+let crashSound = new Audio("https://actions.google.com/sounds/v1/explosions/explosion.ogg");
 
 // EXPLOSION
 let explosionParticles = [];
@@ -111,6 +116,7 @@ function init() {
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
   document.body.appendChild(renderer.domElement);
 
   scene.add(new THREE.AmbientLight(0x404040));
@@ -126,23 +132,27 @@ function init() {
   road.rotation.x = -Math.PI / 2;
   scene.add(road);
 
-  // BUILDINGS (SAFE ZONE)
+  // LANES
+  for (let i = -100; i < 100; i += 5) {
+    const line = new THREE.Mesh(
+      new THREE.BoxGeometry(0.2, 0.01, 3),
+      new THREE.MeshBasicMaterial({ color: 0xffff00 })
+    );
+    line.position.set(0, 0.01, i);
+    scene.add(line);
+  }
+
+  // BUILDINGS
   for (let i = 0; i < 30; i++) {
-    let x, z;
-
-    do {
-      x = (Math.random()*80) - 40;
-      z = (Math.random()*80) - 40;
-    } while (Math.abs(x) < 8 && Math.abs(z) < 8);
-
-    const h = Math.random()*6 + 2;
-
     const building = new THREE.Mesh(
-      new THREE.BoxGeometry(2, h, 2),
+      new THREE.BoxGeometry(2, Math.random()*6+2, 2),
       new THREE.MeshStandardMaterial({ color: 0x5555ff })
     );
-
-    building.position.set(x, h/2, z);
+    building.position.set(
+      (Math.random()*80)-40,
+      building.geometry.parameters.height/2,
+      (Math.random()*80)-40
+    );
     scene.add(building);
     obstacles.push(building);
   }
@@ -163,17 +173,65 @@ function init() {
   car.add(body);
   car.add(top);
 
-  // LIGHTS
-  leftLight = new THREE.SpotLight(0xffffff, 2);
-  rightLight = new THREE.SpotLight(0xffffff, 2);
+  // HEADLIGHTS
+  leftLight = new THREE.SpotLight(0xffffff, 2, 20, Math.PI/6);
+  rightLight = new THREE.SpotLight(0xffffff, 2, 20, Math.PI/6);
 
   leftLight.position.set(-0.3, 0.3, -1);
   rightLight.position.set(0.3, 0.3, -1);
 
+  leftLight.target.position.set(-0.3, 0, -5);
+  rightLight.target.position.set(0.3, 0, -5);
+
   car.add(leftLight);
   car.add(rightLight);
+  car.add(leftLight.target);
+  car.add(rightLight.target);
 
   scene.add(car);
+
+  // TRAFFIC
+  for (let i = 0; i < 6; i++) {
+    const tcar = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 0.5, 2),
+      new THREE.MeshStandardMaterial({ color: 0xff0000 })
+    );
+    tcar.position.set(Math.random()*40-20, 0, Math.random()*40-20);
+    trafficCars.push(tcar);
+    obstacles.push(tcar);
+    scene.add(tcar);
+  }
+
+  // KEYS
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "h") horn.play();
+
+    if (e.key === "l") {
+      lightsOn = !lightsOn;
+      leftLight.visible = lightsOn;
+      rightLight.visible = lightsOn;
+    }
+  });
+}
+
+// EXPLOSION
+function createExplosion(x, z) {
+  explosionParticles = [];
+  for (let i = 0; i < 50; i++) {
+    const p = new THREE.Mesh(
+      new THREE.SphereGeometry(0.1),
+      new THREE.MeshBasicMaterial({ color: 0xff5500 })
+    );
+    p.position.set(x, 0.5, z);
+    p.velocity = {
+      x: (Math.random()-0.5)*0.5,
+      y: Math.random()*0.5,
+      z: (Math.random()-0.5)*0.5
+    };
+    scene.add(p);
+    explosionParticles.push(p);
+  }
+  crashSound.play();
 }
 
 // COLLISION
@@ -186,6 +244,22 @@ function checkCollision() {
   return false;
 }
 
+// MINIMAP
+function updateMap() {
+  let ctx = document.getElementById("map").getContext("2d");
+
+  ctx.fillStyle = "black";
+  ctx.fillRect(0,0,150,150);
+
+  ctx.fillStyle = "lime";
+  ctx.fillRect(75 + car.position.x, 75 + car.position.z, 5, 5);
+
+  ctx.fillStyle = "red";
+  obstacles.forEach(o => {
+    ctx.fillRect(75 + o.position.x, 75 + o.position.z, 3, 3);
+  });
+}
+
 // RESET
 function resetCar() {
   explosionParticles.forEach(p => scene.remove(p));
@@ -193,6 +267,7 @@ function resetCar() {
   exploding = false;
 
   car.position.set(0,0,0);
+  car.rotation.set(0,0,0);
   car.visible = true;
 
   document.getElementById("status").innerText = "RESTARTED";
@@ -202,7 +277,6 @@ function resetCar() {
 function animate() {
   requestAnimationFrame(animate);
 
-  // 🚗 PHYSICS
   speed += acceleration;
 
   if (speed > maxSpeed) speed = maxSpeed;
@@ -221,18 +295,32 @@ function animate() {
 
   if (checkCollision() && !exploding) {
     exploding = true;
+    createExplosion(car.position.x, car.position.z);
     car.visible = false;
     speed = 0;
     document.getElementById("status").innerText = "💥 CRASH";
     setTimeout(resetCar, 2000);
   }
 
-  // CAMERA
+  if (exploding) {
+    explosionParticles.forEach(p => {
+      p.position.x += p.velocity.x;
+      p.position.y += p.velocity.y;
+      p.position.z += p.velocity.z;
+      p.velocity.y -= 0.02;
+    });
+  }
+
+  trafficCars.forEach(c => {
+    c.position.z += 0.05;
+    if (c.position.z > 100) c.position.z = -100;
+  });
+
   camera.position.x = car.position.x;
   camera.position.z = car.position.z + 5;
   camera.lookAt(car.position);
 
-  // UI
+  // 🚗 UI (30 km/h scaling)
   document.getElementById("speedValue").innerText =
     Math.abs(speed * 50).toFixed(0) + " km/h";
 
@@ -250,16 +338,39 @@ function animate() {
   if (!exploding)
     document.getElementById("status").innerText = "SAFE";
 
+  updateMap();
+
   renderer.render(scene, camera);
 }
 
-// BLE CONTROL
+// BLE
+async function connectBLE() {
+  const device = await navigator.bluetooth.requestDevice({
+    filters: [{ name: "GestureCar" }],
+    optionalServices: ["12345678-1234-1234-1234-1234567890ab"]
+  });
+
+  const server = await device.gatt.connect();
+  const service = await server.getPrimaryService("12345678-1234-1234-1234-1234567890ab");
+  const characteristic = await service.getCharacteristic("abcd1234-ab12-cd34-ef56-1234567890ab");
+
+  characteristic.startNotifications();
+  characteristic.addEventListener('characteristicvaluechanged', handleData);
+
+  alert("Connected 🚀");
+}
+
+// CONTROL
 function handleData(event) {
   const cmd = new TextDecoder().decode(event.target.value);
 
   if (cmd.includes('F')) acceleration = accelRate;
   else if (cmd.includes('B')) acceleration = -accelRate;
-  else if (cmd === 'S') acceleration = 0;
+  else if (cmd === 'S') {
+    acceleration = 0;
+    if (speed > 0) speed -= brakeRate;
+    if (speed < 0) speed += brakeRate;
+  }
 
   if (cmd.includes('L')) steering = 0.12;
   else if (cmd.includes('R')) steering = -0.12;
